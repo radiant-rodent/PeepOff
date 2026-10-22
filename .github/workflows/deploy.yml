@@ -24,12 +24,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build site
-        env:
-          TELEGRAPH_TOKEN: ${{ secrets.TELEGRAPH_TOKEN }}
         run: |
           mkdir _site
-          cp index.html styles.css app.js songs.js stats.js _site/
-          node -e "require('fs').writeFileSync('_site/stats-config.js', 'window.PEEPOFF_TELEGRAPH_TOKEN=' + JSON.stringify(process.env.TELEGRAPH_TOKEN || '') + ';\n')"
+          cp index.html styles.css app.js songs.js stats.js stats-config.js _site/
 
       - uses: actions/configure-pages@v5
 

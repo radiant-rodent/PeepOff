@@ -27,15 +27,16 @@ Static files on GitHub Pages. No server, no build step, no framework.
 - `songs.js` — the catalog, generated from the Deezer API (see `update-songs.mjs`)
 - `app.js` — bracket, voting, previews, local save
 - `stats.js` — the shared leaderboard
+- `supabase/schema.sql` — the leaderboard's database schema
 - `.github/workflows/deploy.yml` — builds and deploys on every push
 
-The leaderboard is a JSON blob on a Telegraph page that the browser writes to directly; `stats.js` batches picks and retries when you're offline. The write token is injected at deploy time from a repo secret rather than living in the source.
+The leaderboard is a Supabase Postgres project. Votes are append-only: anonymous clients can insert weighted rows and read the aggregate views, and nothing else. No sign-in, and no way to edit or delete anyone's picks. `stats.js` queues votes locally and flushes them in batches, so the board still works if you're offline.
 
 ### Run it locally
 
 Open `index.html`. That's it.
 
-For the global board, copy `stats-config.example.js` to `stats-config.js` and add a token — without it the game still works and votes just queue up locally.
+For the global board, copy `stats-config.example.js` to `stats-config.js` and drop in your Supabase project URL and anon key — without it the game still works and votes just queue up locally. The schema lives in `supabase/schema.sql`.
 
 ### Refresh the catalog
 

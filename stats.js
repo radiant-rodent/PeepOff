@@ -1,76 +1,26 @@
 (() => {
   "use strict";
 
-  const API = "https://api.telegra.ph";
-  const PATH = window.PEEPOFF_TELEGRAPH_PATH || "PeepOff-Arena-Stats-10-04";
-  const TOKEN = window.PEEPOFF_TELEGRAPH_TOKEN || "";
-  const configured = Boolean(TOKEN);
-  const TITLE = "PeepOff Arena Stats";
-  const PENDING_KEY = "peepoff-stats-pending";
+  const URL = (window.PEEPOFF_SUPABASE_URL || "").replace(/\/+$/, "");
+  const KEY = window.PEEPOFF_SUPABASE_ANON_KEY || "";
+  const configured = Boolean(URL && KEY);
+
+  const PENDING_KEY = "peepoff-votes-pending";
   const CACHE_KEY = "peepoff-stats-cache";
   const FLUSH_DELAY = 4000;
   const RETRY_DELAY = 15000;
   const BASE_RATING = 1500;
 
-  const empty = () => ({ v: 1, tournaments: 0, picks: 0, songs: {}, champions: {} });
+  const empty = () => ({ picks: 0, tournaments: 0, songs: {}, champions: {} });
   const clone = (obj) => JSON.parse(JSON.stringify(obj));
 
   let data = empty();
-  let pending = empty();
+  let pending = { votes: [], champions: [] };
   let listeners = [];
   let flushTimer = null;
   let flushing = false;
   let offline = false;
   let lastSync = 0;
-
-  function normalize(raw) {
-    const out = empty();
-    if (!raw || typeof raw !== "object") return out;
-    out.tournaments = Number(raw.tournaments) || 0;
-    out.picks = Number(raw.picks) || 0;
-    for (const [id, rec] of Object.entries(raw.songs || {})) {
-      const w = Number(rec && rec.w) || 0;
-      const l = Number(rec && rec.l) || 0;
-      if (w || l) out.songs[id] = { w, l };
-    }
-    for (const [id, n] of Object.entries(raw.champions || {})) {
-      const count = Number(n) || 0;
-      if (count) out.champions[id] = count;
-    }
-    return out;
-  }
-
-  function mergeInto(target, src, sign) {
-    target.tournaments += sign * (src.tournaments || 0);
-    target.picks += sign * (src.picks || 0);
-    for (const [id, rec] of Object.entries(src.songs || {})) {
-      const t = target.songs[id] || { w: 0, l: 0 };
-      t.w += sign * rec.w;
-      t.l += sign * rec.l;
-      if (t.w || t.l) target.songs[id] = t;
-      else delete target.songs[id];
-    }
-    for (const [id, n] of Object.entries(src.champions || {})) {
-      const c = (target.champions[id] || 0) + sign * n;
-      if (c) target.champions[id] = c;
-      else delete target.champions[id];
-    }
-  }
-
-  function view() {
-    const out = clone(data);
-    mergeInto(out, pending, 1);
-    return out;
-  }
-
-  function pendingCount() {
-    return (
-      Math.abs(pending.picks) +
-      Math.abs(pending.tournaments) +
-      Object.keys(pending.songs).length +
-      Object.keys(pending.champions).length
-    );
-  }
 
   function notify() {
     for (const fn of listeners) {
@@ -78,6 +28,36 @@
         fn();
       } catch {}
     }
+  }
+
+  function pendingCount() {
+    return pending.votes.length + pending.champions.length;
+  }
+
+  function addInto(target, votes, champions, sign) {
+    for (const v of votes) {
+      const w = String(v.w);
+      const l = String(v.l);
+      const wr = target.songs[w] || (target.songs[w] = { w: 0, l: 0 });
+      wr.w += sign * v.s;
+      const lr = target.songs[l] || (target.songs[l] = { w: 0, l: 0 });
+      lr.l += sign * v.s;
+      target.picks += sign * v.s;
+      if (!wr.w && !wr.l) delete target.songs[w];
+      if (!lr.w && !lr.l) delete target.songs[l];
+    }
+    for (const c of champions) {
+      const id = String(c.id);
+      target.champions[id] = (target.champions[id] || 0) + sign * c.s;
+      target.tournaments += sign * c.s;
+      if (!target.champions[id]) delete target.champions[id];
+    }
+  }
+
+  function view() {
+    const out = clone(data);
+    addInto(out, pending.votes, pending.champions, 1);
+    return out;
   }
 
   function persist() {
@@ -95,31 +75,45 @@
   function restore() {
     try {
       const p = JSON.parse(localStorage.getItem(PENDING_KEY) || "null");
-      if (p) pending = normalize(p);
+      if (p && Array.isArray(p.votes) && Array.isArray(p.champions)) pending = p;
     } catch {}
     try {
       const c = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
-      if (c) data = normalize(c);
+      if (c && c.songs) data = c;
     } catch {}
   }
 
-  function extract(page) {
-    const nodes = (page && page.result && page.result.content) || [];
-    const node = nodes.find((n) => n && n.tag === "pre");
-    if (!node || !Array.isArray(node.children)) return empty();
-    try {
-      return normalize(JSON.parse(node.children.join("")));
-    } catch {
-      return empty();
-    }
+  async function rest(path, init) {
+    const res = await fetch(`${URL}/rest/v1/${path}`, {
+      ...(init || {}),
+      headers: {
+        apikey: KEY,
+        Authorization: `Bearer ${KEY}`,
+        "Content-Type": "application/json",
+        ...((init && init.headers) || {}),
+      },
+    });
+    if (!res.ok) throw new Error(String(res.status));
+    const text = await res.text();
+    return text ? JSON.parse(text) : null;
   }
 
   async function load() {
     if (!configured || typeof fetch !== "function") return null;
     try {
-      const res = await fetch(`${API}/getPage/${PATH}?return_content=true&ts=${Date.now()}`);
-      if (!res.ok) throw new Error(String(res.status));
-      data = extract(await res.json());
+      const [stats, rows, titles] = await Promise.all([
+        rest("global_stats?select=picks,tournaments"),
+        rest("standings?select=song_id,wins,losses"),
+        rest("champion_totals?select=song_id,titles"),
+      ]);
+      const next = empty();
+      if (stats && stats[0]) {
+        next.picks = stats[0].picks || 0;
+        next.tournaments = stats[0].tournaments || 0;
+      }
+      for (const r of rows || []) next.songs[String(r.song_id)] = { w: r.wins, l: r.losses };
+      for (const r of titles || []) next.champions[String(r.song_id)] = r.titles;
+      data = next;
       offline = false;
       lastSync = Date.now();
       cacheSave();
@@ -145,21 +139,29 @@
     if (!pendingCount()) return;
     flushing = true;
     notify();
-    const snapshot = clone(pending);
+    const votes = pending.votes.slice();
+    const champions = pending.champions.slice();
     try {
-      const res = await fetch(`${API}/getPage/${PATH}?return_content=true&ts=${Date.now()}`);
-      if (!res.ok) throw new Error(String(res.status));
-      const fresh = extract(await res.json());
-      mergeInto(fresh, snapshot, 1);
-      const body = new URLSearchParams({
-        access_token: TOKEN,
-        title: TITLE,
-        content: JSON.stringify([{ tag: "pre", children: [JSON.stringify(fresh)] }]),
-      });
-      const put = await fetch(`${API}/editPage/${PATH}`, { method: "POST", body });
-      if (!put.ok) throw new Error(String(put.status));
-      data = fresh;
-      mergeInto(pending, snapshot, -1);
+      if (votes.length) {
+        await rest("votes", {
+          method: "POST",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify(
+            votes.map((v) => ({ winner_id: String(v.w), loser_id: String(v.l), weight: v.s }))
+          ),
+        });
+        pending.votes.splice(0, votes.length);
+        addInto(data, votes, [], 1);
+      }
+      if (champions.length) {
+        await rest("champions", {
+          method: "POST",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify(champions.map((c) => ({ song_id: String(c.id), weight: c.s }))),
+        });
+        pending.champions.splice(0, champions.length);
+        addInto(data, [], champions, 1);
+      }
       offline = false;
       lastSync = Date.now();
       persist();
@@ -174,24 +176,14 @@
   }
 
   function recordPick(winnerId, loserId, sign = 1) {
-    const w = String(winnerId);
-    const l = String(loserId);
-    pending.picks += sign;
-    const wr = pending.songs[w] || { w: 0, l: 0 };
-    wr.w += sign;
-    const lr = pending.songs[l] || { w: 0, l: 0 };
-    lr.l += sign;
-    pending.songs[w] = wr;
-    pending.songs[l] = lr;
+    pending.votes.push({ w: String(winnerId), l: String(loserId), s: sign });
     persist();
     schedule();
     notify();
   }
 
   function recordChampion(id, sign = 1) {
-    const key = String(id);
-    pending.tournaments += sign;
-    pending.champions[key] = (pending.champions[key] || 0) + sign;
+    pending.champions.push({ id: String(id), s: sign });
     persist();
     schedule();
     notify();

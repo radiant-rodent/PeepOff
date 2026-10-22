@@ -26,7 +26,7 @@ jobs:
       - name: Build site
         run: |
           mkdir _site
-          cp index.html styles.css app.js songs.js stats.js stats-config.js _site/
+          cp index.html styles.css app.js songs.js stats.js stats-config.js favicon.png apple-touch-icon.png _site/
 
       - uses: actions/configure-pages@v5
 

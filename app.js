@@ -51,7 +51,15 @@
     status: {},
   };
 
-  const byTrackId = new Map(CATALOG.map((s) => [String(s.id), s]));
+  const byTrackId = new Map();
+  for (const s of CATALOG) {
+    byTrackId.set(String(s.id), s);
+    byTrackId.set(s.id, s);
+  }
+  const sinking = byTrackId.get("1143684982");
+  if (sinking) {
+    byTrackId.set("unr-wordsyouhearonasinki", sinking);
+  }
   const esc = (s) =>
     String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -301,7 +309,7 @@
 
     let html = ratedRows
       .map((r, i) => {
-        const s = byTrackId.get(r.id);
+        const s = byTrackId.get(String(r.id)) || byTrackId.get(r.id);
         const title = s ? s.title : `Unknown (${esc(r.id)})`;
         const album = s ? s.album : "";
         const cover = s ? s.cover : "";

@@ -1,6 +1,6 @@
 // Regenerates songs.js with Lil Peep's official streamable catalog from the Deezer API.
 // Usage: node update-songs.mjs
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
 
 const ARTIST_ID = 11420468;
 const API = "https://api.deezer.com";
@@ -72,7 +72,7 @@ async function main() {
   // verified features on other artists' releases
   const EXTRA_TRACK_IDS = [
     1494409192, 600314212, 118761662, 4203098342, 4203031522, 2281013757, 451082452,
-    1143684982, 546890472, 1821665327, 2474244831, 1123691612, 124337534, 3229540321,
+    546890472, 1821665327, 2474244831, 1123691612, 124337534, 3229540321,
     403284132, 3263494271, 416904852, 920167652, 2240888237, 1458995672, 1845182007,
     1686044037, 1222562562, 377239171, 920878762, 2985396791, 716159692, 1303372852,
     528837031, 528837041, 528837051, 528837061, 528837071, 528837081,
@@ -134,18 +134,37 @@ async function main() {
       (a._album.release_date || "").localeCompare(b._album.release_date || "") ||
       a.title.localeCompare(b.title)
     )
-    .map((t) => ({
-      id: t.id,
-      title: clean(t.title),
-      album: t._album.title,
-      cover: t._album.cover_big || t._album.cover_medium || "",
-      dur: t.duration,
-      link: t.link,
-    }));
+    .map((t) => {
+      const obj = {
+        id: t.id,
+        title: clean(t.title),
+        album: t._album.title,
+        cover: t._album.cover_big || t._album.cover_medium || "",
+        dur: t.duration,
+        link: t.link,
+      };
+      if (clean(t.title).toLowerCase() === "about u") {
+        obj.preview = "https://archive.org/download/lilpeepdiscog/Lil%20Peep/Singles%20%26%20Features/%5B2016%5D%20SoundCloud%20Files%20Vol.%202%20%7BBootleg%7D/Singles/01.%20Lil%20Peep%20-%20About%20U.mp3";
+        obj.previewStart = 20.0;
+      }
+      return obj;
+    });
+
+  // Merge unreleased tracks that are not on Deezer
+  const unreleasedPath = new URL("./unreleased-songs.json", import.meta.url);
+  if (existsSync(unreleasedPath)) {
+    try {
+      const unreleased = JSON.parse(readFileSync(unreleasedPath, "utf8"));
+      songs.push(...unreleased);
+      console.log(`merged ${unreleased.length} unreleased songs from unreleased-songs.json`);
+    } catch (err) {
+      console.warn("Failed to merge unreleased-songs.json:", err.message);
+    }
+  }
 
   const body = songs.map((s) => "  " + JSON.stringify(s) + ",").join("\n");
   const out =
-    `// Lil Peep — official streamable catalog from the Deezer API.\n` +
+    `// Lil Peep — official catalog and unreleased tracks.\n` +
     `// Generated ${new Date().toISOString().slice(0, 10)}. Regenerate with: node update-songs.mjs\n` +
     `window.PEEP_SONGS = [\n${body}\n];\n`;
   writeFileSync(new URL("./songs.js", import.meta.url), out);

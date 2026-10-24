@@ -6,7 +6,7 @@ A for-fun bracket for Lil Peep's discography: two songs show up, you pick the be
 
 ![The match screen](screenshots/match.png)
 
-All 221 tracks are in the draw, and the pairings get re-shuffled every round, so no two brackets play out the same. A full run is 220 picks. Deezer serves 30-second previews, so you can actually listen before deciding.
+All 285 tracks (including unreleased favorites) are in the draw, and the pairings get re-shuffled every round, so no two brackets play out the same. A full run is 284 picks. 30-second previews are available for every track, so you can actually listen before deciding.
 
 <img src="screenshots/mobile.png" width="300" alt="PeepOff on a phone">
 
@@ -46,4 +46,4 @@ node update-songs.mjs
 
 ## Notes
 
-Fan project, not affiliated with Lil Peep's estate. Only released, streamable tracks are included — the unreleased leaks aren't on any streaming service, so they're not in here.
+Fan project, not affiliated with Lil Peep's estate. Includes both official streaming tracks and popular unreleased cuts preserved via archival audio.

@@ -45,6 +45,7 @@
     recordChampion() {},
     load() {},
     flush() {},
+    resetTestData() {},
     standings: () => ({ tournaments: 0, picks: 0, rows: [] }),
     onUpdate() {},
     status: {},
@@ -61,6 +62,9 @@
   let lbTimer = null;
   let locked = false;
   let playingIdx = null;
+  let playingSongId = null;
+  let audioLoading = false;
+  let previewTimer = null;
   let playToken = 0;
   let audio = null;
   let volume = 0.9;
@@ -259,18 +263,43 @@
     else if (st.offline) text = "Offline — showing last synced data";
     else if (st.pending) text = "Votes queued to sync";
     else if (st.lastSync) text = `Live · updated ${timeAgo(st.lastSync)}`;
+
+    if (st.testMode) {
+      els.lbStatus.innerHTML =
+        '<span class="lb-test-badge" title="Running locally: votes stay on your machine and are never sent to the live database">🧪 Local test mode</span> ' +
+        '<span class="muted">· Live DB protected</span> ' +
+        '<button id="resetTestBtn" class="lb-reset-btn" type="button" title="Clear local test picks and reset leaderboard baseline">Reset test picks</button>';
+      const resetBtn = $("resetTestBtn");
+      if (resetBtn && !resetBtn.dataset.bound) {
+        resetBtn.dataset.bound = "1";
+        resetBtn.addEventListener("click", () => {
+          Stats.resetTestData();
+          toast("Local test picks cleared");
+        });
+      }
+      return;
+    }
+
     els.lbStatus.textContent = text;
     els.lbStatus.classList.toggle("offline", Boolean(st.offline));
   }
 
+  let lastLeaderboardHtml = "";
+
   function renderLeaderboard() {
     const { tournaments, picks, rows } = Stats.standings();
-    const played = rows.filter((r) => r.matches > 0).length;
+    const ratedRows = rows.filter((r) => r.matches > 0);
+    const played = ratedRows.length;
     els.lbSummary.textContent =
       `${tournaments} ${tournaments === 1 ? "tournament" : "tournaments"} · ` +
       `${picks} ${picks === 1 ? "pick" : "picks"} · ${played} of ${TOTAL} songs played`;
 
-    els.lbRows.innerHTML = rows
+    const ratedIds = new Set(ratedRows.map((r) => String(r.id)));
+    const unratedSongs = CATALOG
+      .filter((s) => !ratedIds.has(String(s.id)))
+      .sort((a, b) => a.title.localeCompare(b.title));
+
+    let html = ratedRows
       .map((r, i) => {
         const s = byTrackId.get(r.id);
         const title = s ? s.title : `Unknown (${esc(r.id)})`;
@@ -284,7 +313,12 @@
           `<div class="lb-row${i < 3 ? " top" : ""}">` +
           `<span class="lb-rank">${i + 1}</span>` +
           `<span class="lb-song">` +
-          `<img class="lb-art" src="${esc(cover)}" alt="" loading="lazy" />` +
+          `<div class="lb-artwrap">` +
+          `<img class="lb-art" src="${esc(cover)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='apple-touch-icon.png';" />` +
+          `<button class="lb-play" type="button" data-id="${esc(r.id)}" title="Play preview" aria-label="Play preview for ${esc(title)}">` +
+          `<span class="ico">&#9654;</span>` +
+          `</button>` +
+          `</div>` +
           `<span class="lb-names">` +
           `<span class="lb-title">${esc(title)}</span>` +
           `<span class="lb-album">${esc(album)}</span>` +
@@ -299,7 +333,49 @@
       })
       .join("");
 
+    if (unratedSongs.length > 0) {
+      html +=
+        `<div class="lb-category-divider">` +
+        `<div class="lb-category-title">` +
+        `<span class="lb-category-tag">UNRATED</span>` +
+        `<span class="lb-category-count">${unratedSongs.length} ${unratedSongs.length === 1 ? "song" : "songs"} awaiting votes</span>` +
+        `</div>` +
+        `<p class="lb-category-desc">These songs haven't been picked in a tournament yet. Vote on them in a bracket to give them their first ranking!</p>` +
+        `</div>`;
+
+      html += unratedSongs
+        .map((s) => {
+          return (
+            `<div class="lb-row lb-unrated-row">` +
+            `<span class="lb-rank muted">—</span>` +
+            `<span class="lb-song">` +
+            `<div class="lb-artwrap">` +
+            `<img class="lb-art" src="${esc(s.cover)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='apple-touch-icon.png';" />` +
+            `<button class="lb-play" type="button" data-id="${esc(s.id)}" title="Play preview" aria-label="Play preview for ${esc(s.title)}">` +
+            `<span class="ico">&#9654;</span>` +
+            `</button>` +
+            `</div>` +
+            `<span class="lb-names">` +
+            `<span class="lb-title">${esc(s.title)}</span>` +
+            `<span class="lb-album">${esc(s.album)}</span>` +
+            `<span class="lb-sub muted">Unrated · 0–0</span>` +
+            `</span></span>` +
+            `<span class="lb-rating lb-unrated-label">Unrated</span>` +
+            `<span class="lb-win"><span class="lb-bar"><i style="width:0%"></i></span><span class="lb-pct muted">—</span></span>` +
+            `<span class="lb-record muted">0–0</span>` +
+            `<span class="lb-titles muted">—</span>` +
+            `</div>`
+          );
+        })
+        .join("");
+    }
+
+    if (lastLeaderboardHtml !== html) {
+      els.lbRows.innerHTML = html;
+      lastLeaderboardHtml = html;
+    }
     updateLbStatus();
+    updatePlayButtonUI();
   }
 
   function openGlobal() {
@@ -322,14 +398,18 @@
     const [a, b] = currentMatch();
     [a, b].forEach((id, i) => {
       const s = CATALOG[id];
+      els.art[i].onerror = () => {
+        els.art[i].onerror = null;
+        els.art[i].src = "apple-touch-icon.png";
+      };
       els.art[i].src = s.cover;
       els.art[i].alt = `${s.title} — ${s.album}`;
       els.title[i].textContent = s.title;
       els.album[i].textContent = s.album;
       els.dur[i].textContent = fmtDur(s.dur);
       els.song[i].setAttribute("aria-label", `Pick ${s.title} by ${s.album}`);
-      setPlayState(i, null);
     });
+    updatePlayButtonUI();
 
     const matchesThisRound = state.playable.length >> 1;
     els.roundLabel.textContent = `Round ${state.round}`;
@@ -347,7 +427,7 @@
     els.champStats.textContent = `Survived ${state.round} rounds and ${state.played} picks out of ${TOTAL} songs.`;
   }
 
-  /* ---------- previews (fresh signed URLs via Deezer JSONP) ---------- */
+  /* ---------- previews & audio playback ---------- */
 
   let jsonpN = 0;
   function jsonp(url) {
@@ -376,7 +456,9 @@
     });
   }
 
-  async function getPreview(trackId) {
+  async function getPreview(song) {
+    if (song.preview) return song.preview;
+    const trackId = song.id;
     const hit = previewCache.get(trackId);
     if (hit && Date.now() - hit.at < 8 * 60 * 1000) return hit.url;
     const data = await jsonp(`https://api.deezer.com/track/${trackId}`);
@@ -408,64 +490,131 @@
       audio = new Audio();
       audio.preload = "none";
       audio.addEventListener("ended", () => {
-        setPlayState(playingIdx, null);
-        playingIdx = null;
+        stopPreview();
+      });
+      audio.addEventListener("pause", () => {
+        updatePlayButtonUI();
+      });
+      audio.addEventListener("play", () => {
+        updatePlayButtonUI();
       });
       applyVolume();
     }
     return audio;
   }
 
-  function setPlayState(i, mode) {
-    const btn = els.play[i];
-    btn.classList.toggle("loading", mode === "loading");
-    btn.classList.toggle("playing", mode === "playing");
-    btn.disabled = mode === "loading";
-    btn.querySelector(".ico").textContent = mode === "playing" ? "\u275a\u275a" : "\u25b6";
+  function updatePlayButtonUI() {
+    // 1. Update match buttons
+    const [a, b] = (state && state.playable && state.matchIdx !== undefined) ? currentMatch() : [null, null];
+    [a, b].forEach((idx, i) => {
+      const btn = els.play[i];
+      if (!btn) return;
+      const s = idx !== null && idx !== undefined ? CATALOG[idx] : null;
+      const isThisPlaying = s && playingSongId !== null && String(s.id) === String(playingSongId) && audio && !audio.paused;
+      const isThisLoading = s && playingSongId !== null && String(s.id) === String(playingSongId) && audioLoading;
+      btn.classList.toggle("loading", isThisLoading);
+      btn.classList.toggle("playing", isThisPlaying);
+      btn.disabled = isThisLoading;
+      const ico = btn.querySelector(".ico");
+      if (ico) ico.textContent = isThisPlaying ? "\u275a\u275a" : "\u25b6";
+    });
+
+    // 2. Update leaderboard buttons
+    if (els.lbRows) {
+      const lbButtons = els.lbRows.querySelectorAll(".lb-play");
+      lbButtons.forEach((btn) => {
+        const id = btn.getAttribute("data-id");
+        const isThisPlaying = id && playingSongId !== null && String(id) === String(playingSongId) && audio && !audio.paused;
+        const isThisLoading = id && playingSongId !== null && String(id) === String(playingSongId) && audioLoading;
+        btn.classList.toggle("loading", isThisLoading);
+        btn.classList.toggle("playing", isThisPlaying);
+        btn.disabled = isThisLoading;
+        const ico = btn.querySelector(".ico");
+        if (ico) ico.textContent = isThisPlaying ? "\u275a\u275a" : "\u25b6";
+      });
+    }
   }
 
   function stopPreview() {
     playToken++;
+    audioLoading = false;
+    playingSongId = null;
     playingIdx = null;
-    if (audio) audio.pause();
-    setPlayState(0, null);
-    setPlayState(1, null);
+    window.clearTimeout(previewTimer);
+    previewTimer = null;
+    if (audio) {
+      audio.pause();
+    }
+    updatePlayButtonUI();
   }
 
-  async function togglePlay(i) {
-    const [a, b] = currentMatch();
-    const song = CATALOG[i === 0 ? a : b];
+  async function togglePlaySong(song, matchIndex = null) {
     if (!song) return;
-
     const player = getAudio();
-    if (playingIdx === i && !player.paused) {
-      player.pause();
-      setPlayState(i, null);
-      playingIdx = null;
+    const songId = String(song.id);
+
+    if (playingSongId === songId && !player.paused) {
+      stopPreview();
       return;
     }
 
     stopPreview();
-    const token = playToken;
-    playingIdx = i;
-    setPlayState(i, "loading");
+    const token = ++playToken;
+    playingSongId = songId;
+    playingIdx = matchIndex;
+    audioLoading = true;
+    updatePlayButtonUI();
 
     try {
-      const url = await getPreview(song.id);
+      const url = await getPreview(song);
       if (token !== playToken) return;
+
       player.src = url;
+      const startOffset = Number(song.previewStart || song.start || 0);
+
+      let seeked = false;
+      const applySeek = () => {
+        if (!seeked && startOffset > 0) {
+          seeked = true;
+          try { player.currentTime = startOffset; } catch {}
+        }
+      };
+
+      if (startOffset > 0) {
+        player.addEventListener("loadedmetadata", applySeek, { once: true });
+      }
+
       await player.play();
       if (token !== playToken) {
         player.pause();
         return;
       }
-      setPlayState(i, "playing");
+
+      if (startOffset > 0 && player.currentTime < startOffset) {
+        applySeek();
+      }
+
+      audioLoading = false;
+      updatePlayButtonUI();
+
+      // Enforce 30-second preview limit (standard Deezer preview length)
+      window.clearTimeout(previewTimer);
+      previewTimer = window.setTimeout(() => {
+        if (token === playToken && playingSongId === songId) {
+          stopPreview();
+        }
+      }, 30000);
     } catch {
       if (token !== playToken) return;
-      setPlayState(i, null);
-      playingIdx = null;
+      stopPreview();
       toast("Couldn't load the preview — are you online?");
     }
+  }
+
+  function togglePlay(i) {
+    const [a, b] = currentMatch();
+    const song = CATALOG[i === 0 ? a : b];
+    if (song) togglePlaySong(song, i);
   }
 
   /* ---------- toast ---------- */
@@ -542,6 +691,14 @@
     else openGlobal();
   });
   els.backBtn.addEventListener("click", closeGlobal);
+  els.lbRows.addEventListener("click", (e) => {
+    const btn = e.target.closest(".lb-play");
+    if (!btn) return;
+    e.stopPropagation();
+    const id = btn.getAttribute("data-id");
+    const song = byTrackId.get(id);
+    if (song) togglePlaySong(song);
+  });
   Stats.onUpdate(() => {
     if (uiView === "global") renderLeaderboard();
   });
@@ -559,7 +716,7 @@
       document.querySelector(".wrap").innerHTML = "<p>Could not load the song catalog.</p>";
       return;
     }
-    els.footerCount.textContent = `${TOTAL} songs · official Deezer catalog`;
+    els.footerCount.textContent = `${TOTAL} songs · complete catalog`;
     applyVolume();
     state = load();
     if (!state) {

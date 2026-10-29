@@ -6,7 +6,7 @@ A for-fun bracket for Lil Peep's discography: two songs show up, you pick the be
 
 ![The match screen](screenshots/match.png)
 
-All 285 tracks (including unreleased favorites) are in the draw, and the pairings get re-shuffled every round, so no two brackets play out the same. A full run is 284 picks. 30-second previews are available for every track, so you can actually listen before deciding.
+All 284 tracks (including unreleased favorites) are in the draw, and the pairings get re-shuffled every round, so no two brackets play out the same. A full run is 283 picks. 30-second previews are available for every track, so you can actually listen before deciding.
 
 <img src="screenshots/mobile.png" width="300" alt="PeepOff on a phone">
 

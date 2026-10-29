@@ -37,6 +37,26 @@
   const empty = () => ({ picks: 0, tournaments: 0, songs: {}, champions: {} });
   const clone = (obj) => JSON.parse(JSON.stringify(obj));
 
+  // Retired ids whose history now belongs to a surviving song.
+  const ID_ALIASES = { "unr-dead": "3571272611" };
+  const canonicalId = (id) => ID_ALIASES[String(id)] || String(id);
+
+  function normalizeStored(obj) {
+    const songs = {};
+    for (const [id, rec] of Object.entries(obj.songs || {})) {
+      const key = canonicalId(id);
+      const cur = songs[key] || (songs[key] = { w: 0, l: 0 });
+      cur.w += rec.w || 0;
+      cur.l += rec.l || 0;
+    }
+    const champions = {};
+    for (const [id, count] of Object.entries(obj.champions || {})) {
+      const key = canonicalId(id);
+      champions[key] = (champions[key] || 0) + count;
+    }
+    return { ...obj, songs, champions };
+  }
+
   let data = empty();
   let testCommitted = empty();
   let pending = { votes: [], champions: [] };
@@ -60,8 +80,8 @@
 
   function addInto(target, votes, champions, sign) {
     for (const v of votes) {
-      const w = String(v.w);
-      const l = String(v.l);
+      const w = canonicalId(v.w);
+      const l = canonicalId(v.l);
       const wr = target.songs[w] || (target.songs[w] = { w: 0, l: 0 });
       wr.w += sign * v.s;
       const lr = target.songs[l] || (target.songs[l] = { w: 0, l: 0 });
@@ -71,7 +91,7 @@
       if (!lr.w && !lr.l) delete target.songs[l];
     }
     for (const c of champions) {
-      const id = String(c.id);
+      const id = canonicalId(c.id);
       target.champions[id] = (target.champions[id] || 0) + sign * c.s;
       target.tournaments += sign * c.s;
       if (!target.champions[id]) delete target.champions[id];
@@ -119,16 +139,24 @@
   function restore() {
     try {
       const p = JSON.parse(localStorage.getItem(PENDING_KEY) || "null");
-      if (p && Array.isArray(p.votes) && Array.isArray(p.champions)) pending = p;
+      if (p && Array.isArray(p.votes) && Array.isArray(p.champions)) {
+        pending = {
+          votes: p.votes
+            .map((v) => ({ ...v, w: canonicalId(v.w), l: canonicalId(v.l) }))
+            .filter((v) => v.w !== v.l),
+          champions: p.champions.map((c) => ({ ...c, id: canonicalId(c.id) })),
+        };
+        persist();
+      }
     } catch {}
     try {
       const c = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
-      if (c && c.songs) data = c;
+      if (c && c.songs) data = normalizeStored(c);
     } catch {}
     if (isTestMode) {
       try {
         const t = JSON.parse(localStorage.getItem(TEST_COMMITTED_KEY) || "null");
-        if (t && t.songs) testCommitted = t;
+        if (t && t.songs) testCommitted = normalizeStored(t);
       } catch {}
     }
   }
@@ -161,8 +189,16 @@
         next.picks = stats[0].picks || 0;
         next.tournaments = stats[0].tournaments || 0;
       }
-      for (const r of rows || []) next.songs[String(r.song_id)] = { w: r.wins, l: r.losses };
-      for (const r of titles || []) next.champions[String(r.song_id)] = r.titles;
+      for (const r of rows || []) {
+        const id = canonicalId(r.song_id);
+        const rec = next.songs[id] || (next.songs[id] = { w: 0, l: 0 });
+        rec.w += r.wins;
+        rec.l += r.losses;
+      }
+      for (const r of titles || []) {
+        const id = canonicalId(r.song_id);
+        next.champions[id] = (next.champions[id] || 0) + r.titles;
+      }
       data = next;
       offline = false;
       lastSync = Date.now();
@@ -244,14 +280,17 @@
   }
 
   function recordPick(winnerId, loserId, sign = 1) {
-    pending.votes.push({ w: String(winnerId), l: String(loserId), s: sign });
+    const winner = canonicalId(winnerId);
+    const loser = canonicalId(loserId);
+    if (winner === loser) return;
+    pending.votes.push({ w: winner, l: loser, s: sign });
     persist();
     schedule();
     notify();
   }
 
   function recordChampion(id, sign = 1) {
-    pending.champions.push({ id: String(id), s: sign });
+    pending.champions.push({ id: canonicalId(id), s: sign });
     persist();
     schedule();
     notify();

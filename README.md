@@ -6,7 +6,7 @@ A for-fun bracket for Lil Peep's discography: two songs show up, you pick the be
 
 ![The match screen](screenshots/match.png)
 
-All 284 tracks (including unreleased favorites) are in the draw, and the pairings get re-shuffled every round, so no two brackets play out the same. A full run is 283 picks. 30-second previews are available for every track, so you can actually listen before deciding.
+There are 311 tracks (including unreleased favorites) in the draw, and the pairings get re-shuffled every round, so no two brackets play out the same. A full run is 310 picks. 30-second previews are available for every track, so you can actually listen before deciding.
 
 <img src="screenshots/mobile.png" width="300" alt="PeepOff on a phone">
 
@@ -43,6 +43,12 @@ For the global board, copy `stats-config.example.js` to `stats-config.js` and dr
 ```bash
 node update-songs.mjs
 ```
+
+Curated archive tracks and features live in `unreleased-songs.json` (including numeric Deezer IDs for features absent from the artist-page import). `catalog-overrides.json` preserves canonical project names and matching covers for streaming entries. The generator merges these by ID, so a refresh cannot duplicate the same ID or collapse the two different songs called “Kiss Me” during the curated merge.
+
+Use the [estate's music index](https://lilpeep.com/pages/music) and its linked tracklists as the primary reference for names, albums, and artwork. Compare the artwork itself, not just the archive filename. Keep song IDs unchanged when correcting metadata so leaderboard history stays attached. The additions documented in `CATALOG-AUDIT.md` require an actual vocal contribution from Peep; hooks, choruses, and outros count, not just separate verses.
+
+Run the catalog checks with `node --test tests/catalog.test.mjs`.
 
 ## Notes
 

@@ -78,6 +78,8 @@
   let volume = 0.9;
   let muted = false;
   const previewCache = new Map();
+  const bufferedPreviewCache = new Map();
+  let previewAbort = null;
 
   try {
     const prefs = JSON.parse(localStorage.getItem(AUDIO_KEY) || "");
@@ -465,7 +467,38 @@
   }
 
   async function getPreview(song) {
-    if (song.preview) return song.preview;
+    if (song.preview) {
+      // Archive ZIP members are streamed without byte-range support. Buffer
+      // these as a typed Blob so the browser can seek to the preview offset.
+      if (!/\.zip\//i.test(new URL(song.preview).pathname)) return song.preview;
+      const cached = bufferedPreviewCache.get(song.preview);
+      if (cached) {
+        bufferedPreviewCache.delete(song.preview);
+        bufferedPreviewCache.set(song.preview, cached);
+        return cached;
+      }
+      const controller = new AbortController();
+      previewAbort = controller;
+      const timer = window.setTimeout(() => controller.abort(), 45000);
+      try {
+        const response = await fetch(song.preview, { signal: controller.signal });
+        if (!response.ok) throw new Error("archive preview unavailable");
+        const bytes = await response.arrayBuffer();
+        if (controller.signal.aborted) throw new Error("preview cancelled");
+        const url = URL.createObjectURL(new Blob([bytes], { type: "audio/mpeg" }));
+        bufferedPreviewCache.set(song.preview, url);
+        // At most two full tracks in memory; no downloaded media is persisted.
+        while (bufferedPreviewCache.size > 2) {
+          const oldest = bufferedPreviewCache.keys().next().value;
+          URL.revokeObjectURL(bufferedPreviewCache.get(oldest));
+          bufferedPreviewCache.delete(oldest);
+        }
+        return url;
+      } finally {
+        window.clearTimeout(timer);
+        if (previewAbort === controller) previewAbort = null;
+      }
+    }
     const trackId = song.id;
     const hit = previewCache.get(trackId);
     if (hit && Date.now() - hit.at < 8 * 60 * 1000) return hit.url;
@@ -545,6 +578,10 @@
 
   function stopPreview() {
     playToken++;
+    if (previewAbort) {
+      previewAbort.abort();
+      previewAbort = null;
+    }
     audioLoading = false;
     playingSongId = null;
     playingIdx = null;
@@ -724,7 +761,7 @@
       document.querySelector(".wrap").innerHTML = "<p>Could not load the song catalog.</p>";
       return;
     }
-    els.footerCount.textContent = `${TOTAL} songs · complete catalog`;
+    els.footerCount.textContent = `${TOTAL} songs · curated catalog`;
     applyVolume();
     state = load();
     if (!state) {

@@ -1,6 +1,7 @@
 // Regenerates songs.js with Lil Peep's official streamable catalog from the Deezer API.
 // Usage: node update-songs.mjs
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mergeCatalogMetadata } from "./catalog-metadata.mjs";
 
 const ARTIST_ID = 11420468;
 const API = "https://api.deezer.com";
@@ -129,7 +130,7 @@ async function main() {
     }
   }
 
-  const songs = [...best.values()]
+  let songs = [...best.values()]
     .sort((a, b) =>
       (a._album.release_date || "").localeCompare(b._album.release_date || "") ||
       a.title.localeCompare(b.title)
@@ -150,17 +151,22 @@ async function main() {
       return obj;
     });
 
-  // Merge unreleased tracks that are not on Deezer
+  // Curated archive tracks and features not discovered through Peep's artist page.
+  // Some have numeric Deezer IDs; merge by ID so these cannot be duplicated.
+  let additional = [];
   const unreleasedPath = new URL("./unreleased-songs.json", import.meta.url);
   if (existsSync(unreleasedPath)) {
     try {
-      const unreleased = JSON.parse(readFileSync(unreleasedPath, "utf8"));
-      songs.push(...unreleased);
-      console.log(`merged ${unreleased.length} unreleased songs from unreleased-songs.json`);
+      additional = JSON.parse(readFileSync(unreleasedPath, "utf8"));
+      console.log(`loaded ${additional.length} curated songs from unreleased-songs.json`);
     } catch (err) {
       console.warn("Failed to merge unreleased-songs.json:", err.message);
     }
   }
+
+  // Preserve canonical project names and matching covers on future API refreshes.
+  const overrides = JSON.parse(readFileSync(new URL("./catalog-overrides.json", import.meta.url), "utf8"));
+  songs = mergeCatalogMetadata(songs, additional, overrides);
 
   const body = songs.map((s) => "  " + JSON.stringify(s) + ",").join("\n");
   const out =
